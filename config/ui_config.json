@@ -1,0 +1,13 @@
+{
+  "toggles": [
+    { "key": "autoRedirectEnabled", "label": "Auto-Redirección", "default": true },
+    { "key": "autoLoginEnabled", "label": "Auto-Login", "default": true },
+    { "key": "adBlockerEnabled", "label": "Bloquear Anuncios", "default": true },
+    { "key": "dashboardEnabled", "label": "Dashboard de Inicio", "default": true },
+    { "key": "horarioEnabled", "label": "Horario Interactivo", "default": true },
+    { "key": "monitorTareasEnabled", "label": "Monitor de Tareas", "default": true },
+    { "key": "vistaCursosActivada", "label": "Limpieza de Cursos", "default": true },
+    { "key": "vistaMinimalistaActivada", "label": "Vista Minimalista", "default": true },
+    { "key": "caratulasEnabled", "label": "Generador de Carátulas", "default": false }
+  ]
+}

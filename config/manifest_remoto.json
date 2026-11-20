@@ -1,0 +1,49 @@
+{
+  "version": "4.0.0",
+  "archivos": [
+    "00_core.js",
+    "02_adblocker.js",
+    "03_tareas.js",
+    "04_cursos_ui.js",
+    "05_preview.js",
+    "06_inline.js",
+    "07_calculadora.js",
+    "08_dashboard.js",
+    "09_horario.js",
+    "10_caratulas.js"
+  ],
+  "rutas": [
+    {
+      "descripcion": "Núcleo compartido",
+      "contiene": ["usat.edu.pe"],
+      "modulos": ["00_core.js"]
+    },
+    {
+      "descripcion": "Estilos minimalistas y filtro de cursos",
+      "contiene": ["usat.edu.pe"],
+      "excluir": ["calificadorestudiante.aspx"],
+      "modulos": ["04_cursos_ui.js"]
+    },
+    {
+      "descripcion": "Campus principal",
+      "soloTop": true,
+      "contiene": ["Main.aspx"],
+      "modulos": ["02_adblocker.js", "08_dashboard.js", "09_horario.js"]
+    },
+    {
+      "descripcion": "Calculadora de Notas",
+      "contiene": ["calificadorestudiante.aspx"],
+      "modulos": ["07_calculadora.js"]
+    },
+    {
+      "descripcion": "Monitor de tareas en Mis Cursos y Vista de Curso",
+      "contiene": ["aulavirtual/my/", "aulavirtual/course/view.php"],
+      "modulos": ["03_tareas.js"]
+    },
+    {
+      "descripcion": "Herramientas dentro de un curso - Moodle",
+      "contiene": ["aulavirtual/course/view.php"],
+      "modulos": ["05_preview.js", "06_inline.js", "10_caratulas.js"]
+    }
+  ]
+}
