@@ -1,5 +1,5 @@
 {
-  "version": "4.0.0",
+  "version": "4.0.1",
   "archivos": [
     "00_core.js",
     "02_adblocker.js",
@@ -10,40 +10,85 @@
     "07_calculadora.js",
     "08_dashboard.js",
     "09_horario.js",
-    "10_caratulas.js"
+    "10_caratulas.js",
+    "11_novedades.js"
   ],
   "rutas": [
     {
       "descripcion": "Núcleo compartido",
-      "contiene": ["usat.edu.pe"],
-      "modulos": ["00_core.js"]
+      "contiene": [
+        "usat.edu.pe"
+      ],
+      "modulos": [
+        "00_core.js"
+      ]
     },
     {
       "descripcion": "Estilos minimalistas y filtro de cursos",
-      "contiene": ["usat.edu.pe"],
-      "excluir": ["calificadorestudiante.aspx"],
-      "modulos": ["04_cursos_ui.js"]
+      "contiene": [
+        "usat.edu.pe"
+      ],
+      "excluir": [
+        "calificadorestudiante.aspx"
+      ],
+      "modulos": [
+        "04_cursos_ui.js"
+      ]
     },
     {
       "descripcion": "Campus principal",
       "soloTop": true,
-      "contiene": ["Main.aspx"],
-      "modulos": ["02_adblocker.js", "08_dashboard.js", "09_horario.js"]
+      "contiene": [
+        "Main.aspx"
+      ],
+      "modulos": [
+        "02_adblocker.js",
+        "08_dashboard.js",
+        "09_horario.js"
+      ]
     },
     {
       "descripcion": "Calculadora de Notas",
-      "contiene": ["calificadorestudiante.aspx"],
-      "modulos": ["07_calculadora.js"]
+      "contiene": [
+        "calificadorestudiante.aspx"
+      ],
+      "modulos": [
+        "07_calculadora.js"
+      ]
     },
     {
       "descripcion": "Monitor de tareas en Mis Cursos y Vista de Curso",
-      "contiene": ["aulavirtual/my/", "aulavirtual/course/view.php"],
-      "modulos": ["03_tareas.js"]
+      "contiene": [
+        "aulavirtual/my/",
+        "aulavirtual/course/view.php"
+      ],
+      "modulos": [
+        "03_tareas.js"
+      ]
     },
     {
       "descripcion": "Herramientas dentro de un curso - Moodle",
-      "contiene": ["aulavirtual/course/view.php"],
-      "modulos": ["05_preview.js", "06_inline.js", "10_caratulas.js"]
+      "contiene": [
+        "aulavirtual/course/view.php"
+      ],
+      "modulos": [
+        "05_preview.js",
+        "06_inline.js",
+        "10_caratulas.js"
+      ]
+    },
+    {
+      "descripcion": "Campus Estudiante principal",
+      "soloTop": true,
+      "contiene": [
+        "Main.aspx"
+      ],
+      "modulos": [
+        "02_adblocker.js",
+        "08_dashboard.js",
+        "09_horario.js",
+        "11_novedades.js"
+      ]
     }
   ]
 }
