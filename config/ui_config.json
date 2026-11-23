@@ -8,6 +8,6 @@
     { "key": "monitorTareasEnabled", "label": "Monitor de Tareas", "default": true },
     { "key": "vistaCursosActivada", "label": "Limpieza de Cursos", "default": true },
     { "key": "vistaMinimalistaActivada", "label": "Vista Minimalista", "default": true },
-    { "key": "caratulasEnabled", "label": "Generador de Carátulas", "default": false }
+    { "key": "caratulasEnabled", "label": "Generador de Carátulas", "default": true }
   ]
 }

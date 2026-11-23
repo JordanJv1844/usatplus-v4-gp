@@ -77,10 +77,57 @@
         return null;
     }
 
+    function centrarMarco(dataUrl) {
+        return new Promise(resolve => {
+            if (!dataUrl) return resolve(dataUrl);
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    const w = img.naturalWidth, h = img.naturalHeight;
+                    const c = document.createElement('canvas');
+                    c.width = w;
+                    c.height = h;
+                    const x = c.getContext('2d');
+                    x.drawImage(img, 0, 0);
+                    const data = x.getImageData(0, 0, w, h).data;
+
+                    let minX = w, minY = h, maxX = -1, maxY = -1;
+                    for (let y = 0; y < h; y++) {
+                        for (let px = 0; px < w; px++) {
+                            const i = (y * w + px) * 4;
+                            if (data[i + 3] > 20 && (data[i] < 240 || data[i + 1] < 240 || data[i + 2] < 240)) {
+                                if (px < minX) minX = px;
+                                if (px > maxX) maxX = px;
+                                if (y < minY) minY = y;
+                                if (y > maxY) maxY = y;
+                            }
+                        }
+                    }
+                    if (maxX <= minX || maxY <= minY) return resolve(dataUrl);
+
+                    const out = document.createElement('canvas');
+                    out.width = w;
+                    out.height = h;
+                    const ox = out.getContext('2d');
+                    const m = Math.round(w * 0.03); // Margen idéntico (~0.63 cm) en los 4 lados
+                    ox.drawImage(
+                        c,
+                        minX, minY, maxX - minX + 1, maxY - minY + 1,
+                        m, m, w - 2 * m, h - 2 * m
+                    );
+                    resolve(out.toDataURL('image/png'));
+                } catch (e) { resolve(dataUrl); }
+            };
+            img.onerror = () => resolve(dataUrl);
+            img.src = dataUrl;
+        });
+    }
+
     function cargarAssets() {
         if (!assetsPromise) {
             assetsPromise = Promise.all(Object.keys(ASSETS).map(async k => {
-                const d = await urlToDataURL(ASSETS[k]);
+                let d = await urlToDataURL(ASSETS[k]);
+                if (k === 'franjas' && d) d = await centrarMarco(d);
                 const info = infoImagen(d);
                 if (d && info) { imgCache[k] = d; imgInfoCache[k] = info; }
             }));
@@ -122,6 +169,103 @@
     }
 
     const nombreArchivoSeguro = s => String(s || 'USAT').replace(/[\\/:*?"<>|]+/g, '').trim() || 'USAT';
+
+    // ---------- MOTOR DE LAYOUT UNIFICADO (1:1 entre Preview, Word, PDF y Copiar) ----------
+    function calcularLayoutClasica(est, lista, ratioEsc) {
+        const PAGE_W = 595.3;  // A4 ancho en pt (21.0 cm)
+        const PAGE_H = 841.9;  // A4 alto en pt (29.7 cm)
+        const M = 70.85;       // Margen 2.5 cm en pt
+        const bodyH = PAGE_H - 2 * M - 12; // 688.2 pt útiles
+        const individual = est.modalidad === 'individual';
+        const etiquetaGrupo = individual ? 'ESTUDIANTE:' : 'INTEGRANTES:';
+        const ratio = ratioEsc || 1.25;
+
+        let escCm = 8.0; // Equivale a ~180px en el preview (tamaño original)
+        const altoEscPt = cm => (cm * 28.346 * ratio) + 6;
+        const compacto = lista.length > 10;
+
+        const items = [
+            { tipo: 'texto', texto: 'UNIVERSIDAD CATÓLICA SANTO TORIBIO DE MOGROVEJO', size: 13, bold: true, caps: true, before: 0, line: 17 },
+            { tipo: 'texto', texto: est.facultad || '', size: 12, bold: true, caps: true, before: 4, line: 16 },
+            { tipo: 'texto', texto: est.escuela || '', size: 11, bold: true, caps: true, before: 4, line: 15 },
+            { tipo: 'escudo', before: 20, line: altoEscPt(escCm), auto: true, comp: true },
+            { tipo: 'texto', texto: (est.titulo || '').toUpperCase(), size: 14, bold: true, before: 14, line: 19, comp: true },
+            { tipo: 'texto', texto: 'CURSO:', size: 11, bold: true, before: 20, line: 15, comp: true },
+            { tipo: 'texto', texto: est.curso || '', size: 11, bold: false, before: 2, line: 15 },
+            { tipo: 'texto', texto: 'DOCENTE:', size: 11, bold: true, before: 16, line: 15, comp: true },
+            { tipo: 'texto', texto: est.docente || '', size: 11, bold: false, before: 2, line: 15 },
+            { tipo: 'texto', texto: etiquetaGrupo, size: 11, bold: true, before: 16, line: 15, comp: true },
+            ...lista.map(n => ({ tipo: 'texto', texto: individual ? n : `• ${n}`, size: 11, bold: false, before: compacto ? 1 : 2, line: compacto ? 13.5 : 15 }))
+        ];
+
+        let itPie = null;
+        if (est.lugarFecha) {
+            itPie = { tipo: 'pie', texto: est.lugarFecha, size: 11, bold: true, before: 20, line: 16 };
+            items.push(itPie);
+        }
+
+        const itEsc = items.find(it => it.tipo === 'escudo');
+        const total = () => items.reduce((s, it) => s + it.before + it.line, 0);
+
+        // 1) Si no cabe, primero compacta ligeramente los espacios verticales antes de tocar el escudo
+        if (total() > bodyH) {
+            items.forEach(it => { if (it.comp) it.before = Math.max(8, Math.round(it.before * 0.6)); });
+        }
+
+        // 2) Solo si aún falta espacio, reduce el escudo suavemente (nunca por debajo de 5.5 cm)
+        while (total() > bodyH && escCm > 5.5) {
+            escCm = Math.round((escCm - 0.3) * 10) / 10;
+            itEsc.line = altoEscPt(escCm);
+        }
+
+        const sobrante = bodyH - total();
+        if (itPie && sobrante > 0) {
+            itPie.before += Math.floor(sobrante);
+        }
+
+        return { PAGE_W, PAGE_H, M, bodyH, escCm, items, sobrante: Math.max(0, sobrante) };
+    }
+
+    function calcularLayoutModerna(est, lista) {
+        const PAGE_W = 595.3;
+        const PAGE_H = 841.9;
+        const TOP = 146;
+        const MARGEN_X = 85.05; // 3.0 cm (1701 twips)
+        const BASE_BOTTOM = PAGE_H - 56.7;
+        const individual = est.modalidad === 'individual';
+        const etiquetaGrupo = individual ? 'ESTUDIANTE:' : 'INTEGRANTES:';
+
+        const base = [
+            { tipo: 'tituloUni', line1: 'UNIVERSIDAD CATÓLICA', line2: 'SANTO TORIBIO DE MOGROVEJO – USAT', size: 20, bold: true, color: 'dc2626', before: 0, line: 31, gap: false, lineas: 2 },
+            { tipo: 'texto', texto: est.facultad || '', size: 16, bold: true, caps: true, before: 28.6, line: 20, gap: true, lineas: 1 },
+            { tipo: 'texto', texto: est.escuela || '', size: 14, bold: true, caps: true, before: 17, line: 18, gap: true, lineas: 1 },
+            { tipo: 'texto', texto: 'TEMA:', size: 14, bold: true, before: 48, line: 18, gap: true, lineas: 1 },
+            { tipo: 'texto', texto: est.titulo || '', size: 14, bold: false, before: 21.7, line: 18, gap: true, lineas: 1 },
+            { tipo: 'texto', texto: 'ASIGNATURA:', size: 14, bold: true, before: 34.4, line: 18, gap: true, lineas: 1 },
+            { tipo: 'texto', texto: est.curso || '', size: 14, bold: false, before: 18.9, line: 18, gap: true, lineas: 1 },
+            { tipo: 'texto', texto: 'DOCENTE:', size: 14, bold: true, before: 34.4, line: 18, gap: true, lineas: 1 },
+            { tipo: 'texto', texto: est.docente || '', size: 14, bold: false, before: 18.9, line: 18, gap: true, lineas: 1 },
+            { tipo: 'texto', texto: etiquetaGrupo, size: 14, bold: true, before: 50, line: 18, gap: true, lineas: 1 },
+            ...lista.map((n, i) => ({ tipo: 'texto', texto: n, size: 14, bold: false, before: i === 0 ? 13 : 2, line: 18, gap: i === 0, lineas: 1 }))
+        ];
+
+        const tieneLinea = !!est.lugarFecha;
+        let s = 1, pie = 0;
+        for (;;) {
+            const y = TOP + base.reduce((a, it) => a + (it.gap ? it.before * s : it.before) + it.line * it.lineas, 0);
+            pie = Math.max(12, 712 - y);
+            const fin = y + (tieneLinea ? pie + 16 : 0);
+            if (fin <= BASE_BOTTOM || s <= 0.3) break;
+            s = Math.round((s - 0.05) * 100) / 100;
+        }
+
+        const items = base.map(it => Object.assign({}, it, { before: it.gap ? it.before * s : it.before }));
+        if (tieneLinea) {
+            items.push({ tipo: 'pie', texto: est.lugarFecha, size: 12, bold: true, before: pie, line: 16, lineas: 1 });
+        }
+
+        return { PAGE_W, PAGE_H, TOP, MARGEN_X, items };
+    }
 
     // ---------- ZIP + OpenXML DOCX ----------
     const CRC_TABLE = (() => {
@@ -212,47 +356,31 @@
 
         if (esA) {
             const F = 'Times New Roman';
-            const M = 70.85;
-            const bodyH = PAGE_H - 2 * M - 26;
             const esc = addImagen('escudoClasico');
-            let escCm = lista.length > 5 ? 5.2 : 6.8;
-            const altoEsc = cm => esc ? (cm * 28.346 * esc.h / esc.w) + 6 : 0;
+            const ratioEsc = esc ? (esc.h / esc.w) : 1.25;
+            const layout = calcularLayoutClasica(est, lista, ratioEsc);
 
-            const items = [];
-            const add = (inner, before, line, extra) => { const it = Object.assign({ inner, before, line }, extra || {}); items.push(it); return it; };
+            parrafos = layout.items.map(it => {
+                if (it.tipo === 'escudo') {
+                    if (!esc) return '';
+                    const cx = emuCm(layout.escCm);
+                    const cy = Math.round(cx * esc.h / esc.w);
+                    return wPar(wImagenInline(esc, cx, cy), it.before, 0);
+                }
+                return wPar(
+                    wRun(it.texto, { font: F, size: it.size, bold: it.bold, caps: it.caps }),
+                    it.before,
+                    it.line
+                );
+            }).join('');
 
-            add(wRun('UNIVERSIDAD CATÓLICA SANTO TORIBIO DE MOGROVEJO', { font: F, size: 13, bold: true }), 0, 17);
-            add(wRun(est.facultad || '', { font: F, size: 12, bold: true, caps: true }), 4, 16);
-            add(wRun(est.escuela || '', { font: F, size: 11, bold: true, caps: true }), 4, 15);
-            const itEsc = esc ? add('', 26, 0, { auto: true }) : null;
-            add(wRun((est.titulo || '').toUpperCase(), { font: F, size: 14, bold: true }), 14, 19);
-            add(wRun('CURSO:', { font: F, size: 11, bold: true }), 26, 15);
-            add(wRun(est.curso || '', { font: F, size: 11 }), 2, 15);
-            add(wRun('DOCENTE:', { font: F, size: 11, bold: true }), 18, 15);
-            add(wRun(est.docente || '', { font: F, size: 11 }), 2, 15);
-            const itLabel = add(wRun(etiquetaGrupo, { font: F, size: 11, bold: true }), 26, 15);
-            lista.forEach(n => add(wRun(individual ? n : `• ${n}`, { font: F, size: 11 }), 2, 15));
-
-            const total = () => items.reduce((s, it) => s + it.before + it.line, 0);
-            if (itEsc) itEsc.line = altoEsc(escCm);
-            while (total() > bodyH && escCm > 3.2 && itEsc) { escCm -= 0.4; itEsc.line = altoEsc(escCm); }
-            itLabel.before = Math.max(26, itLabel.before + (bodyH - total()));
-
-            if (itEsc) {
-                const cx = emuCm(escCm), cy = Math.round(cx * esc.h / esc.w);
-                itEsc.inner = wImagenInline(esc, cx, cy);
-            }
-            parrafos = items.map(it => wPar(it.inner, it.before, it.auto ? 0 : it.line)).join('');
-
-            tieneFooter = !!est.lugarFecha;
-            sectPr = `<w:sectPr>${tieneFooter ? '<w:footerReference w:type="default" r:id="rIdFooter"/>' : ''}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="${tw(M)}" w:right="${tw(M)}" w:bottom="${tw(M)}" w:left="${tw(M)}" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr>`;
+            tieneFooter = false;
+            sectPr = `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="${tw(layout.M)}" w:right="${tw(layout.M)}" w:bottom="${tw(layout.M)}" w:left="${tw(layout.M)}" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr>`;
         } else {
             const F = 'Calibri';
-            const ROJO = 'dc2626';
-            const TOP = 146;
-            const BASE_BOTTOM = PAGE_H - 56.7;
+            const layout = calcularLayoutModerna(est, lista);
             const marco = addImagen('franjas');
-            const marcaBase = await atenuarImagen(imgCache.escudoClasico, 0.14);
+            const marcaBase = await atenuarImagen(imgCache.escudoClasico, 0.10);
             const marca = addImagen('marcaAgua', marcaBase);
             const logo = addImagen('logoColor');
 
@@ -264,40 +392,28 @@
             }
             if (logo) {
                 const cx = emuCm(4.0), cy = Math.round(cx * logo.h / logo.w);
-                anclas += wImagenFlotante(logo, cx, cy, { off: emuCm(13.4) }, { off: emuCm(1.5) }, 3, false);
+                anclas += wImagenFlotante(logo, cx, cy, { off: emuCm(15.5) }, { off: emuCm(1.5) }, 3, false);
             }
 
-            const items = [];
-            const add = (inner, before, line, gap, lineas) => items.push({ inner, before, line, gap: !!gap, lineas: lineas || 1 });
+            parrafos = layout.items.map(it => {
+                if (it.tipo === 'tituloUni') {
+                    return wPar(
+                        anclas
+                        + wRun(it.line1, { font: F, size: it.size, bold: it.bold, color: it.color })
+                        + wSalto
+                        + wRun(it.line2, { font: F, size: it.size, bold: it.bold, color: it.color }),
+                        it.before,
+                        it.line
+                    );
+                }
+                return wPar(
+                    wRun(it.texto, { font: F, size: it.size, bold: it.bold, caps: it.caps }),
+                    it.before,
+                    it.line
+                );
+            }).join('');
 
-            add(anclas
-                + wRun('UNIVERSIDAD CATÓLICA', { font: F, size: 20, bold: true, color: ROJO })
-                + wSalto
-                + wRun('SANTO TORIBIO DE MOGROVEJO – USAT', { font: F, size: 20, bold: true, color: ROJO }), 0, 31, false, 2);
-            add(wRun(est.facultad || '', { font: F, size: 16, bold: true, caps: true }), 28.6, 20, true);
-            add(wRun(est.escuela || '', { font: F, size: 14, bold: true, caps: true }), 17, 18, true);
-            add(wRun('TEMA:', { font: F, size: 14, bold: true }), 48, 18, true);
-            add(wRun(est.titulo || '', { font: F, size: 14 }), 21.7, 18, true);
-            add(wRun('ASIGNATURA:', { font: F, size: 14, bold: true }), 34.4, 18, true);
-            add(wRun(est.curso || '', { font: F, size: 14 }), 18.9, 18, true);
-            add(wRun('DOCENTE:', { font: F, size: 14, bold: true }), 34.4, 18, true);
-            add(wRun(est.docente || '', { font: F, size: 14 }), 18.9, 18, true);
-            add(wRun(etiquetaGrupo, { font: F, size: 14, bold: true }), 50, 18, true);
-            lista.forEach((n, i) => add(wRun(n, { font: F, size: 14 }), i === 0 ? 13 : 2, 18, i === 0));
-
-            const tieneLinea = !!est.lugarFecha;
-            let s = 1, pie = 0;
-            for (;;) {
-                const y = TOP + items.reduce((a, it) => a + (it.gap ? it.before * s : it.before) + it.line * it.lineas, 0);
-                pie = Math.max(12, 712 - y);
-                const fin = y + (tieneLinea ? pie + 16 : 0);
-                if (fin <= BASE_BOTTOM || s <= 0.3) break;
-                s = Math.round((s - 0.05) * 100) / 100;
-            }
-            parrafos = items.map(it => wPar(it.inner, it.gap ? it.before * s : it.before, it.line)).join('');
-            if (tieneLinea) parrafos += wPar(wRun(est.lugarFecha, { font: F, size: 12, bold: true }), pie, 16);
-
-            sectPr = `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="${tw(TOP)}" w:right="1701" w:bottom="1134" w:left="1701" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr>`;
+            sectPr = `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="${tw(layout.TOP)}" w:right="1701" w:bottom="1134" w:left="1701" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr>`;
         }
 
         const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -389,15 +505,21 @@
         const userElem = document.querySelector('.usertext, .usermenu .userbutton .usertext, .user-name');
         const estudiante = userElem ? userElem.textContent.trim() : '';
         const curso = obtenerNombreCurso();
+        const idCurso = new URLSearchParams(window.location.search).get('id') || 'general';
 
         let docente = '';
         const summary = document.querySelector('#section-0 .summary, .course-content .summary');
         if (summary) {
             const matchDocente = summary.innerText.match(/Docente:\s*([^\n\r]+)/i);
-            if (matchDocente && matchDocente[1]) docente = matchDocente[1].trim();
+            if (matchDocente && matchDocente[1]) {
+                docente = matchDocente[1].trim();
+                localStorage.setItem(`usat_caratula_docente_${idCurso}`, docente);
+            }
+        }
+        if (!docente) {
+            docente = localStorage.getItem(`usat_caratula_docente_${idCurso}`) || '';
         }
 
-        const idCurso = new URLSearchParams(window.location.search).get('id') || 'general';
         const grupoGuardado = localStorage.getItem(`usat_caratula_grupo_${idCurso}`) || estudiante;
         const facultadGuardada = localStorage.getItem('usat_perfil_facultad') || 'FACULTAD DE INGENIERÍA';
         const escuelaGuardada = localStorage.getItem('usat_perfil_escuela') || 'ESCUELA DE INGENIERÍA DE SISTEMAS Y COMPUTACIÓN';
@@ -408,26 +530,52 @@
     function inyectarBotonDisparador() {
         if (!ENV.getSetting('caratulasEnabled', true)) return;
         if (document.getElementById('btn-usat-caratula')) return;
-        const listaActividades = document.querySelector('#section-0 ul.section, .course-content ul.section');
-        if (!listaActividades) return;
 
-        listaActividades.style.position = 'relative';
+        const sec = new URLSearchParams(window.location.search).get('section');
+        const esOtraUnidad = sec !== null && sec !== '0';
+
         const btn = document.createElement('button');
         btn.id = 'btn-usat-caratula';
         btn.type = 'button';
         btn.innerHTML = `${CORE.ICONOS.documento}<span>Generar Carátula</span>`;
         Object.assign(btn.style, {
-            position: 'absolute', top: '4px', right: '15px', backgroundColor: '#dc2626',
-            color: '#ffffff', border: 'none', borderRadius: '6px', padding: '6px 14px',
-            fontWeight: '600', fontSize: '12px', cursor: 'pointer',
+            backgroundColor: '#dc2626', color: '#ffffff', border: 'none', borderRadius: '6px',
+            padding: '6px 14px', fontWeight: '600', fontSize: '12px', cursor: 'pointer',
             boxShadow: '0 2px 4px rgba(153, 27, 27, 0.25)', display: 'inline-flex',
-            alignItems: 'center', gap: '6px', zIndex: '10', transition: 'all 0.15s ease'
+            alignItems: 'center', gap: '6px', zIndex: '10', transition: 'all 0.15s ease',
+            margin: '0'
         });
         btn.onmouseover = () => { btn.style.backgroundColor = '#7f1d1d'; };
         btn.onmouseout = () => { btn.style.backgroundColor = '#dc2626'; };
         btn.onmousedown = () => { btn.style.transform = 'scale(0.97)'; };
         btn.onmouseup = () => { btn.style.transform = 'scale(1)'; };
         btn.onclick = mostrarModalCaratula;
+
+        if (esOtraUnidad) {
+            const tabsBar = document.querySelector('.course-content ul.nav-tabs, #region-main ul.nav-tabs');
+            if (tabsBar) {
+                tabsBar.style.position = 'relative';
+                Object.assign(btn.style, {
+                    position: 'absolute', right: '4px', bottom: '8px'
+                });
+                tabsBar.appendChild(btn);
+                return;
+            }
+            const listaUnidad = document.querySelector('.course-content ul.section');
+            if (!listaUnidad) return;
+            const barra = document.createElement('div');
+            barra.id = 'usat-caratula-bar';
+            barra.style.cssText = 'display:flex;justify-content:flex-end;margin:0 0 10px 0;';
+            barra.appendChild(btn);
+            listaUnidad.parentNode.insertBefore(barra, listaUnidad);
+            return;
+        }
+
+        const listaActividades = document.querySelector('#section-0 ul.section, .course-content ul.section');
+        if (!listaActividades) return;
+
+        listaActividades.style.position = 'relative';
+        Object.assign(btn.style, { position: 'absolute', top: '4px', right: '15px' });
         listaActividades.appendChild(btn);
     }
 
@@ -440,9 +588,9 @@
         modalOverlay.id = 'modal-usat-caratula';
         modalOverlay.innerHTML = `
             <style>
-                #modal-usat-caratula { position:fixed; inset:0; background:rgba(15,23,42,0.65); backdrop-filter:blur(4px); z-index:99999; display:flex; align-items:center; justify-content:center; font-family:system-ui,-apple-system,sans-serif; }
+                #modal-usat-caratula { position:fixed; inset:0; background:rgba(15,23,42,0.65); backdrop-filter:blur(4px); z-index:2147483647 !important; display:flex; align-items:center; justify-content:center; font-family:system-ui,-apple-system,sans-serif; }
                 .usat-card-modal { background:#ffffff; width:95vw; max-width:1060px; height:90vh; max-height:840px; border-radius:12px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 25px -5px rgba(0,0,0,0.3); }
-                .usat-modal-header { padding:14px 20px; background:#dc2626; color:#ffffff; display:flex; justify-content:space-between; align-items:center; }
+                .usat-modal-header { padding:1px 20px; background:#dc2626; color:#ffffff; display:flex; justify-content:space-between; align-items:center; }
                 .usat-modal-header h2 { margin:0; font-size:15px; font-weight:700; }
                 .usat-modal-close { background:none; border:none; color:#ffffff; cursor:pointer; opacity:0.85; display:inline-flex; align-items:center; padding:4px; }
                 .usat-modal-close:hover { opacity:1; }
@@ -452,12 +600,22 @@
                 .usat-field label { font-size:11px; font-weight:700; color:#475569; text-transform:uppercase; }
                 .usat-field input, .usat-field textarea { border:1px solid #cbd5e1; border-radius:6px; padding:7px 10px; font-size:12.5px; color:#1e293b; outline:none; background:#ffffff; }
                 .usat-field input:focus, .usat-field textarea:focus { border-color:#dc2626; }
-                .usat-segmented { display:grid; grid-template-columns:1fr 1fr; gap:6px; background:#e2e8f0; padding:3px; border-radius:6px; }
-                .usat-segmented button { border:none; padding:6px; font-size:12px; font-weight:600; border-radius:4px; cursor:pointer; background:transparent; color:#475569; }
-                .usat-segmented button.active { background:#ffffff; color:#dc2626; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+                #modal-usat-caratula button { margin:0 !important; }
+                .usat-segmented { display:grid; grid-template-columns:1fr 1fr; align-items:center; gap:6px; background:#e2e8f0; padding:4px; border-radius:6px; }
+                .usat-segmented button { margin:0 !important; border:none !important; padding:7px 6px !important; line-height:1.2 !important; display:flex !important; align-items:center !important; justify-content:center !important; font-size:12px !important; font-weight:600 !important; border-radius:4px !important; cursor:pointer !important; background:transparent !important; color:#475569 !important; box-shadow:none !important; }
+                .usat-segmented button.active { background:#ffffff !important; color:#991b1b !important; box-shadow:0 1px 3px rgba(0,0,0,0.1) !important; }
+                .usat-page-a4 p, .usat-page-a4 div, .usat-page-a4 span { font-family: inherit !important; }
                 .usat-btn-sort { align-self:flex-end; background:none; border:none; color:#dc2626; font-size:11px; font-weight:600; cursor:pointer; padding:2px 4px; display:inline-flex; align-items:center; gap:4px; }
-                .usat-preview-container { padding:20px; overflow-y:auto; display:flex; justify-content:center; align-items:flex-start; background:#64748b; }
+                .usat-preview-pane { position:relative; overflow:hidden; background:#64748b; display:flex; flex-direction:column; }
+                .usat-preview-container { flex:1; padding:24px; overflow:auto; box-sizing:border-box; }
+                #usat-zoom-stage { position:relative; width:470px; height:665px; margin:0 auto; }
+                #usat-zoom-scaler { width:470px; height:665px; transform-origin:0 0; transition:transform 0.12s ease; }
                 .usat-page-a4 { background:#ffffff; width:470px; height:665px; box-shadow:0 10px 15px -3px rgba(0,0,0,0.3); position:relative; box-sizing:border-box; overflow:hidden; font-family:'Times New Roman',Times,serif; color:#000000; }
+                .usat-zoom-bar { position:absolute; right:18px; bottom:16px; z-index:20; display:inline-flex !important; align-items:center !important; gap:2px; background:rgba(15,23,42,0.88); backdrop-filter:blur(4px); padding:4px !important; line-height:1 !important; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.12); }
+                .usat-zoom-bar button { margin:0 !important; background:transparent !important; border:none !important; color:#f8fafc !important; height:26px !important; min-width:26px !important; padding:0 6px !important; line-height:1 !important; border-radius:5px !important; cursor:pointer !important; display:inline-flex !important; align-items:center !important; justify-content:center !important; font-size:11.5px !important; font-weight:600 !important; box-shadow:none !important; }
+
+                .usat-zoom-bar button:hover { background:rgba(255,255,255,0.14) !important; }
+                .usat-zoom-bar button svg { width:14px !important; height:14px !important; min-width:14px !important; max-width:14px !important; }
                 .usat-modal-footer { padding:12px 20px; background:#ffffff; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px; }
                 .usat-action-btn { border:none; border-radius:6px; padding:8px 14px; font-size:12px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
                 .btn-secondary { background:#f1f5f9; color:#334155; }
@@ -488,7 +646,7 @@
                         </div>
                         <div class="usat-field"><label>Facultad</label><input type="text" id="input-facultad" value="${E(datos.facultadGuardada)}"></div>
                         <div class="usat-field"><label>Escuela</label><input type="text" id="input-escuela" value="${E(datos.escuelaGuardada)}"></div>
-                        <div class="usat-field"><label>Título / Tema</label><input type="text" id="input-titulo" value="Primer Avance"></div>
+                        <div class="usat-field"><label>Título / Tema</label><input type="text" id="input-titulo" value="Avance de Proyecto"></div>
                         <div class="usat-field"><label>Asignatura</label><input type="text" id="input-curso" value="${E(datos.curso)}"></div>
                         <div class="usat-field"><label>Docente</label><input type="text" id="input-docente" value="${E(datos.docente)}"></div>
                         <div class="usat-field" id="box-integrantes" style="display:none;">
@@ -500,7 +658,20 @@
                         </div>
                         <div class="usat-field"><label>Pie de Página (Lugar y Año)</label><input type="text" id="input-lugar" value="Chiclayo, ${new Date().getFullYear()}"></div>
                     </div>
-                    <div class="usat-preview-container"><div class="usat-page-a4" id="render-target"></div></div>
+                    <div class="usat-preview-pane">
+                        <div class="usat-preview-container" id="usat-preview-scroll">
+                            <div id="usat-zoom-stage">
+                                <div id="usat-zoom-scaler">
+                                    <div class="usat-page-a4" id="render-target"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="usat-zoom-bar">
+                            <button type="button" id="btn-zoom-out" title="Alejar">${CORE.ICONOS.menos}</button>
+                            <button type="button" id="btn-zoom-reset" title="Restablecer zoom">100%</button>
+                            <button type="button" id="btn-zoom-in" title="Acercar">${CORE.ICONOS.mas}</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="usat-modal-footer">
                     <button type="button" class="usat-action-btn btn-secondary" id="btn-export-copy">${CORE.ICONOS.copiar}<span>Copiar Formato</span></button>
@@ -524,85 +695,97 @@
                 : estado.integrantesTexto.split('\n').map(l => l.replace(/^[\s*•\-\d.)]+/, '').trim()).filter(Boolean)
         );
 
+        function generarHtmlCaratula(anchoPx, altoPx) {
+            const lista = getListaNombres();
+            const infoEsc = imgInfoCache.escudoClasico;
+            const ratioEsc = infoEsc ? (infoEsc.h / infoEsc.w) : 1.25;
+
+            if (estado.plantilla === 'clasica') {
+                const layout = calcularLayoutClasica(estado, lista, ratioEsc);
+                const S = anchoPx / layout.PAGE_W;
+                const padPx = (layout.M * S).toFixed(2);
+                const escW = (layout.escCm * (anchoPx / 21)).toFixed(2);
+
+                const bloquesHtml = layout.items.map(it => {
+                    const mt = (it.before * S).toFixed(2);
+                    if (it.tipo === 'escudo') {
+                        return `<div style="margin:${mt}px 0 0;padding-bottom:${(6 * S).toFixed(2)}px;text-align:center;line-height:0;">
+                            <img src="${srcImg('escudoClasico')}" style="width:${escW}px;height:auto;display:inline-block;" alt="Escudo USAT">
+                        </div>`;
+                    }
+                    const fs = (it.size * S).toFixed(2);
+                    const lh = (it.line * S).toFixed(2);
+                    return `<p style="margin:${mt}px 0 0;padding:0;text-align:center;font-size:${fs}px;line-height:${lh}px;font-weight:${it.bold ? 'bold' : 'normal'};${it.caps ? 'text-transform:uppercase;' : ''}">${E(it.texto) || '&nbsp;'}</p>`;
+                }).join('');
+
+                return `<div style="position:relative;z-index:2;width:100%;height:100%;padding:${padPx}px;box-sizing:border-box;">${bloquesHtml}</div>`;
+            }
+
+            const layout = calcularLayoutModerna(estado, lista);
+            const S = anchoPx / layout.PAGE_W;
+            const PX_CM = anchoPx / 21;
+            const padTop = (layout.TOP * S).toFixed(2);
+            const padX = (layout.MARGEN_X * S).toFixed(2);
+            const marcaW = 12.5 * PX_CM;
+            const marcaH = marcaW * ratioEsc;
+            const marcaX = ((anchoPx - marcaW) / 2).toFixed(2);
+            const marcaY = ((altoPx - marcaH) / 2).toFixed(2);
+            const logoW = (4.0 * PX_CM).toFixed(2);
+            const logoX = (15.5 * PX_CM).toFixed(2);
+            const logoY = (1.5 * PX_CM).toFixed(2);
+
+            const bloquesHtml = layout.items.map(it => {
+                const mt = (it.before * S).toFixed(2);
+                const fs = (it.size * S).toFixed(2);
+                const lh = (it.line * S).toFixed(2);
+                if (it.tipo === 'tituloUni') {
+                    return `<p style="margin:${mt}px 0 0;padding:0;text-align:center;color:#${it.color};font-size:${fs}px;line-height:${lh}px;font-weight:bold;">${E(it.line1)}<br>${E(it.line2)}</p>`;
+                }
+                return `<p style="margin:${mt}px 0 0;padding:0;text-align:center;color:#000000;font-size:${fs}px;line-height:${lh}px;font-weight:${it.bold ? 'bold' : 'normal'};${it.caps ? 'text-transform:uppercase;' : ''}">${E(it.texto) || '&nbsp;'}</p>`;
+            }).join('');
+
+            return `
+                <div style="position:absolute;top:0;left:0;width:${anchoPx}px;height:${altoPx}px;margin:0;padding:0;z-index:1;pointer-events:none;">
+                    <img src="${srcImg('franjas')}" style="width:${anchoPx}px;height:${altoPx}px;margin:0;padding:0;display:block;" alt="Marco">
+                </div>
+                <div style="position:absolute;left:${marcaX}px;top:${marcaY}px;z-index:1;opacity:0.10;pointer-events:none;line-height:0;">
+                    <img src="${srcImg('escudoClasico')}" style="width:${marcaW.toFixed(2)}px;height:auto;display:block;" alt="Marca">
+                </div>
+                <div style="position:absolute;left:${logoX}px;top:${logoY}px;z-index:2;pointer-events:none;line-height:0;">
+                    <img src="${srcImg('logoColor')}" style="width:${logoW}px;height:auto;display:block;" alt="Logo USAT">
+                </div>
+                <div style="position:relative;z-index:2;width:100%;height:100%;padding:${padTop}px ${padX}px 0;box-sizing:border-box;">
+                    ${bloquesHtml}
+                </div>
+            `;
+        }
+
+        async function crearHojaExportacion() {
+            const hoja = document.createElement('div');
+            hoja.className = 'usat-page-a4';
+            hoja.style.cssText = 'position:relative;width:794px;height:1122px;overflow:hidden;background:#ffffff;box-shadow:none;margin:0;padding:0;border:none;color:#000000;';
+            hoja.style.fontFamily = estado.plantilla === 'clasica'
+                ? "'Times New Roman', Times, serif"
+                : "Calibri, Arial, sans-serif";
+            hoja.innerHTML = generarHtmlCaratula(794, 1122);
+            await esperarImagenes(hoja);
+            return hoja;
+        }
+
         function renderCaratula() {
             const preview = document.getElementById('render-target');
             if (!preview) return;
-            const lista = getListaNombres();
-            const footerHtml = estado.lugarFecha
-                ? `<div style="position:absolute;bottom:20px;left:0;right:0;text-align:center;font-weight:bold;font-size:11px;">${E(estado.lugarFecha)}</div>`
-                : '';
-
-            if (estado.plantilla === 'clasica') {
-                preview.innerHTML = `
-                    <div style="position:relative;z-index:2;height:100%;padding:35px 30px;box-sizing:border-box;display:flex;flex-direction:column;">
-                        <div style="text-align:center;line-height:1.3;">
-                            <p style="margin:0;font-weight:bold;font-size:13px;text-transform:uppercase;">UNIVERSIDAD CATÓLICA SANTO TORIBIO DE MOGROVEJO</p>
-                            <p style="margin:3px 0 0;font-weight:bold;font-size:12px;text-transform:uppercase;">${E(estado.facultad)}</p>
-                            <p style="margin:3px 0 0;font-weight:bold;font-size:11px;text-transform:uppercase;">${E(estado.escuela)}</p>
-                        </div>
-                        <div style="text-align:center;margin:15px 0 10px;">
-                            <img src="${srcImg('escudoClasico')}" width="180" style="width:180px;height:auto;" alt="Escudo USAT">
-                        </div>
-                        <div style="text-align:center;margin-bottom:15px;">
-                            <p style="margin:0;font-weight:bold;font-size:13.5px;text-transform:uppercase;">${E(estado.titulo) || '&nbsp;'}</p>
-                            <div style="margin-top:14px;">
-                                <p style="margin:0;font-weight:bold;font-size:11.5px;">CURSO:</p>
-                                <p style="margin:2px 0 0;font-size:11.5px;">${E(estado.curso) || '&nbsp;'}</p>
-                            </div>
-                            <div style="margin-top:12px;">
-                                <p style="margin:0;font-weight:bold;font-size:11.5px;">DOCENTE:</p>
-                                <p style="margin:2px 0 0;font-size:11.5px;">${E(estado.docente) || '&nbsp;'}</p>
-                            </div>
-                        </div>
-                        <div style="text-align:center;margin-top:auto;padding-bottom:30px;">
-                            <p style="margin:0 0 4px;font-weight:bold;font-size:11.5px;">${estado.modalidad === 'individual' ? 'ESTUDIANTE:' : 'INTEGRANTES:'}</p>
-                            <div style="font-size:11px;line-height:1.45;">
-                                ${lista.map(n => `<div>${estado.modalidad === 'individual' ? E(n) : `• ${E(n)}`}</div>`).join('')}
-                            </div>
-                        </div>
-                        ${footerHtml}
-                    </div>
-                `;
-            } else {
-                preview.innerHTML = `
-                    <div style="position:absolute;inset:0;z-index:1;pointer-events:none;">
-                        <img src="${srcImg('franjas')}" style="width:100%;height:100%;object-fit:fill;" alt="Marco">
-                    </div>
-                    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1;opacity:0.12;pointer-events:none;">
-                        <img src="${srcImg('escudoClasico')}" width="280" style="width:280px;height:auto;" alt="Marca">
-                    </div>
-                    <div style="position:relative;z-index:2;height:100%;padding:35px 30px;box-sizing:border-box;display:flex;flex-direction:column;">
-                        <div style="display:flex;justify-content:flex-end;">
-                            <img src="${srcImg('logoColor')}" width="150" style="width:150px;height:auto;" alt="Logo USAT">
-                        </div>
-                        <div style="text-align:center;margin-top:15px;">
-                            <p style="margin:0;color:#dc2626;font-weight:bold;font-size:13.5px;text-transform:uppercase;">UNIVERSIDAD CATÓLICA<br>SANTO TORIBIO DE MOGROVEJO – USAT</p>
-                            <p style="margin:10px 0 0;font-weight:bold;font-size:11.5px;text-transform:uppercase;">${E(estado.facultad)}</p>
-                            <p style="margin:2px 0 0;font-weight:bold;font-size:10.5px;text-transform:uppercase;">${E(estado.escuela)}</p>
-                        </div>
-                        <div style="text-align:center;margin:20px 0 10px;">
-                            <p style="margin:0;font-weight:bold;font-size:11px;">TEMA:</p>
-                            <p style="margin:2px 0 0;font-size:12px;">${E(estado.titulo) || '&nbsp;'}</p>
-                            <p style="margin:14px 0 0;font-weight:bold;font-size:11px;">ASIGNATURA:</p>
-                            <p style="margin:2px 0 0;font-size:12px;">${E(estado.curso) || '&nbsp;'}</p>
-                            <p style="margin:14px 0 0;font-weight:bold;font-size:11px;">DOCENTE:</p>
-                            <p style="margin:2px 0 0;font-size:12px;">${E(estado.docente) || '&nbsp;'}</p>
-                        </div>
-                        <div style="text-align:center;margin-top:auto;padding-bottom:30px;">
-                            <p style="margin:0 0 4px;font-weight:bold;font-size:11px;">${estado.modalidad === 'individual' ? 'ESTUDIANTE:' : 'INTEGRANTES:'}</p>
-                            <div style="font-size:11px;line-height:1.45;">
-                                ${lista.map(n => `<div>${E(n)}</div>`).join('')}
-                            </div>
-                        </div>
-                        ${footerHtml}
-                    </div>
-                `;
-            }
+            preview.style.fontFamily = estado.plantilla === 'clasica'
+                ? "'Times New Roman', Times, serif"
+                : "Calibri, Arial, sans-serif";
+            preview.innerHTML = generarHtmlCaratula(470, 665);
         }
 
         const resetBotonCopiar = () => {
             const btn = document.getElementById('btn-export-copy');
-            if (btn) btn.innerHTML = `${CORE.ICONOS.copiar}<span>Copiar Formato</span>`;
+            if (!btn) return;
+            const texto = estado.plantilla === 'clasica' ? 'Copiar Formato' : 'Copiar como Imagen';
+            btn.innerHTML = `${CORE.ICONOS.copiar}<span>${texto}</span>`;
         };
 
         document.getElementById('input-titulo').oninput = (e) => { estado.titulo = e.target.value; resetBotonCopiar(); renderCaratula(); };
@@ -664,38 +847,75 @@
             await cargarAssets();
             const lista = getListaNombres();
             const esA = estado.plantilla === 'clasica';
-            const footerCopy = (!esA && estado.lugarFecha)
-                ? `<p style="margin:25pt 0 0;text-align:center;font-weight:bold;font-size:11pt;">${E(estado.lugarFecha)}</p>`
-                : '';
+
+            if (!esA) {
+                btn.innerHTML = `${CORE.ICONOS.spinner}<span>Copiando...</span>`;
+                btn.disabled = true;
+                let hoja = null;
+                try {
+                    const html2pdfFn = await CORE.cargarLibreria('html2pdf');
+                    hoja = await crearHojaExportacion();
+
+                    const opt = {
+                        margin: 0,
+                        html2canvas: {
+                            scale: 2,
+                            useCORS: true,
+                            backgroundColor: '#ffffff',
+                            logging: false,
+                            scrollX: 0,
+                            scrollY: 0
+                        }
+                    };
+                    const canvas = await html2pdfFn().set(opt).from(hoja).toCanvas().get('canvas');
+                    const blob = await new Promise((resolve, reject) => {
+                        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Error al generar PNG')), 'image/png');
+                    });
+
+                    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                    btn.innerHTML = `${CORE.ICONOS.check}<span>Imagen copiada</span>`;
+                    clearTimeout(timerCopiar);
+                    timerCopiar = setTimeout(resetBotonCopiar, 4000);
+                } catch (err) {
+                    CORE.toast({ mensaje: 'No se pudo copiar la imagen al portapapeles.', tipo: 'error' });
+                    resetBotonCopiar();
+                } finally {
+                    if (hoja) hoja.remove();
+                    btn.disabled = false;
+                }
+                return;
+            }
+
             const imgTag = (clave, anchoPx, alt) => {
                 const info = imgInfoCache[clave];
                 const h = info ? Math.round(anchoPx * info.h / info.w) : 0;
                 return `<img width="${anchoPx}"${h ? ` height="${h}"` : ''} src="${srcImg(clave)}" alt="${alt}">`;
             };
 
-            const copyHtml = esA
-                ? `<div style="font-family:'Times New Roman',serif;text-align:center;color:#000000;">
-                    <p style="font-weight:bold;font-size:14pt;margin:0;">UNIVERSIDAD CATÓLICA SANTO TORIBIO DE MOGROVEJO</p>
-                    <p style="font-weight:bold;font-size:12pt;margin:4pt 0 0;">${E(estado.facultad)}</p>
-                    <p style="font-weight:bold;font-size:11pt;margin:4pt 0 0;">${E(estado.escuela)}</p>
-                    <p style="margin:20pt 0;">${imgTag('escudoClasico', 260, 'Escudo')}</p>
-                    <p style="font-weight:bold;font-size:14pt;margin:15pt 0 0;">${E((estado.titulo || '').toUpperCase())}</p>
-                    <p style="font-weight:bold;margin:15pt 0 0;">CURSO:</p><p style="margin:2pt 0 0;">${E(estado.curso)}</p>
-                    <p style="font-weight:bold;margin:12pt 0 0;">DOCENTE:</p><p style="margin:2pt 0 0;">${E(estado.docente)}</p>
-                    <p style="font-weight:bold;margin:25pt 0 0;">${estado.modalidad === 'individual' ? 'ESTUDIANTE:' : 'INTEGRANTES:'}</p>
-                    ${lista.map(n => `<p style="margin:2pt 0 0;">${estado.modalidad === 'individual' ? E(n) : `• ${E(n)}`}</p>`).join('')}
-                    ${footerCopy}</div>`
-                : `<div style="font-family:Calibri,Arial,sans-serif;text-align:center;color:#000000;">
-                    <div style="text-align:right;">${imgTag('logoColor', 150, 'Logo')}</div>
-                    <p style="font-weight:bold;font-size:20pt;color:#dc2626;margin:25pt 0 0;">UNIVERSIDAD CATÓLICA<br>SANTO TORIBIO DE MOGROVEJO – USAT</p>
-                    <p style="font-weight:bold;font-size:16pt;margin:20pt 0 0;">${E(estado.facultad)}</p>
-                    <p style="font-weight:bold;font-size:14pt;margin:10pt 0 0;">${E(estado.escuela)}</p>
-                    <p style="font-weight:bold;font-size:14pt;margin:40pt 0 0;">TEMA:</p><p style="font-size:14pt;margin:4pt 0 0;">${E(estado.titulo)}</p>
-                    <p style="font-weight:bold;font-size:14pt;margin:25pt 0 0;">ASIGNATURA:</p><p style="font-size:14pt;margin:4pt 0 0;">${E(estado.curso)}</p>
-                    <p style="font-weight:bold;font-size:14pt;margin:25pt 0 0;">DOCENTE:</p><p style="font-size:14pt;margin:4pt 0 0;">${E(estado.docente)}</p>
-                    <p style="font-weight:bold;font-size:14pt;margin:35pt 0 0;">${estado.modalidad === 'individual' ? 'ESTUDIANTE:' : 'INTEGRANTES:'}</p>
-                    ${lista.map(n => `<p style="font-size:14pt;margin:2pt 0 0;">${E(n)}</p>`).join('')}
-                    ${footerCopy}</div>`;
+            const fuenteCopy = "'Times New Roman',serif";
+            const pC = (contenido, extraStyle = '') =>
+                `<p align="center" style="text-align:center;font-family:${fuenteCopy};color:#000000;${extraStyle}">${contenido}</p>`;
+
+            const infoEsc = imgInfoCache.escudoClasico;
+            const ratioEsc = infoEsc ? (infoEsc.h / infoEsc.w) : 1.25;
+            const layout = calcularLayoutClasica(estado, lista, ratioEsc);
+            const escPx = Math.round(layout.escCm * 37.795);
+            const lineasVacias = Math.max(1, Math.floor(layout.sobrante / 15));
+            const espaciadorPie = Array(lineasVacias).fill(pC('&nbsp;', 'margin:0;line-height:1.15;')).join('');
+
+            const contenido = layout.items.map(it => {
+                if (it.tipo === 'escudo') {
+                    return pC(imgTag('escudoClasico', escPx, 'Escudo'), `margin:${it.before}pt 0 0;`);
+                }
+                const txt = it.caps ? E(it.texto.toUpperCase()) : E(it.texto);
+                const inner = it.bold ? `<b>${txt}</b>` : txt;
+                if (it.tipo === 'pie') {
+                    return `${espaciadorPie}${pC(inner, `margin:0;font-weight:bold;font-size:${it.size}pt;`)}`;
+                }
+                return pC(inner, `margin:${it.before}pt 0 0;font-size:${it.size}pt;${it.bold ? 'font-weight:bold;' : ''}`);
+            }).join('');
+
+            const copyHtml = `<div align="center" style="font-family:${fuenteCopy};text-align:center;color:#000000;">${contenido}</div>`;
 
             try {
                 const blob = new Blob([copyHtml], { type: 'text/html' });
@@ -738,24 +958,20 @@
                 }
 
                 await cargarAssets();
-                renderCaratula();
-                const original = document.getElementById('render-target');
-
-                hoja = document.createElement('div');
-                hoja.style.cssText = 'position:relative;width:794px;height:1122px;overflow:hidden;background:#ffffff;';
-                const copia = original.cloneNode(true);
-                copia.removeAttribute('id');
-                copia.style.boxShadow = 'none';
-                copia.style.transform = `scale(${794 / 470})`;
-                copia.style.transformOrigin = '0 0';
-                hoja.appendChild(copia);
-                await esperarImagenes(hoja);
+                hoja = await crearHojaExportacion();
 
                 const opt = {
                     margin: 0,
                     filename: `Caratula - ${nombreArchivoSeguro(estado.titulo)}.pdf`,
                     image: { type: 'jpeg', quality: 0.98 },
-                    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
+                    html2canvas: {
+                        scale: 2,
+                        useCORS: true,
+                        backgroundColor: '#ffffff',
+                        logging: false,
+                        scrollX: 0,
+                        scrollY: 0
+                    },
                     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
                 };
                 await html2pdfFn().set(opt).from(hoja).toPdf().get('pdf').then(pdf => {
@@ -769,6 +985,29 @@
                 btn.disabled = false;
             }
         };
+
+        let zoomPreview = 1;
+        const aplicarZoom = (nuevoZoom) => {
+            zoomPreview = Math.min(2, Math.max(0.75, Math.round(nuevoZoom * 100) / 100));
+            const stage = document.getElementById('usat-zoom-stage');
+            const scaler = document.getElementById('usat-zoom-scaler');
+            const lbl = document.getElementById('btn-zoom-reset');
+            if (stage) {
+                stage.style.width = `${Math.round(470 * zoomPreview)}px`;
+                stage.style.height = `${Math.round(665 * zoomPreview)}px`;
+            }
+            if (scaler) scaler.style.transform = `scale(${zoomPreview})`;
+            if (lbl) lbl.textContent = `${Math.round(zoomPreview * 100)}%`;
+        };
+
+        document.getElementById('btn-zoom-in').onclick = () => aplicarZoom(zoomPreview + 0.15);
+        document.getElementById('btn-zoom-out').onclick = () => aplicarZoom(zoomPreview - 0.15);
+        document.getElementById('btn-zoom-reset').onclick = () => aplicarZoom(1);
+        document.getElementById('usat-preview-scroll').addEventListener('wheel', (e) => {
+            if (!e.ctrlKey) return;
+            e.preventDefault();
+            aplicarZoom(zoomPreview + (e.deltaY < 0 ? 0.15 : -0.15));
+        }, { passive: false });
 
         const cerrar = () => modalOverlay.remove();
         document.getElementById('btn-close-modal').onclick = cerrar;
@@ -789,6 +1028,7 @@
 
     function detener() {
         document.getElementById('btn-usat-caratula')?.remove();
+        document.getElementById('usat-caratula-bar')?.remove();
         document.getElementById('modal-usat-caratula')?.remove();
         if (observerBoton) {
             observerBoton.disconnect();
