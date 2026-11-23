@@ -88,22 +88,38 @@
             .usat-control-rango span { width: 145px; }
             .usat-control-rango input[type="range"] { flex-grow: 1; height: 6px; border-radius: 3px; background: #cbd5e1; appearance: none; outline: none; cursor: pointer; }
             .usat-control-rango input[type="range"]::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #dc2626; cursor: pointer; }
-            .usat-panel-footer { display: flex; gap: 8px; margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; flex-wrap: wrap; }
+            .usat-panel-footer { display: flex !important; align-items: center !important; gap: 8px; margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px; flex-wrap: wrap; }
             .usat-btn-accion {
-                padding: 6px 12px; border: 1px solid #cbd5e1; background: #ffffff; border-radius: 6px;
-                font-size: 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: #334155;
+                margin: 0 !important; padding: 7px 12px !important; width: auto !important; height: auto !important;
+                border: 1px solid #cbd5e1 !important; background: #ffffff !important; border-radius: 6px !important;
+                font-size: 12px !important; font-weight: 600 !important; line-height: 1.2 !important;
+                cursor: pointer !important; display: inline-flex !important; align-items: center !important;
+                justify-content: center !important; gap: 6px !important; color: #334155 !important;
+                white-space: nowrap !important; box-sizing: border-box !important;
             }
-            .usat-btn-accion:hover { background: #f1f5f9; border-color: #94a3b8; }
+            .usat-btn-accion:hover { background: #f1f5f9 !important; border-color: #94a3b8 !important; }
+            .usat-btn-accion svg {
+                width: 14px !important; height: 14px !important;
+                min-width: 14px !important; max-width: 14px !important;
+                flex-shrink: 0 !important; display: block !important;
+            }
 
             #usat-modal-ampliar {
                 position: fixed; inset: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.85);
                 z-index: 999998; display: none; flex-direction: column; align-items: center; justify-content: center;
             }
-            .usat-modal-toolbar { position: absolute; top: 14px; width: 94%; display: flex; justify-content: space-between; }
+            .usat-modal-toolbar { position: absolute; top: 14px; width: 94%; display: flex; justify-content: space-between; align-items: center; }
             .usat-modal-btn {
-                background: #1e293b; border: 1px solid #334155; color: #ffffff; padding: 7px 12px;
-                font-size: 12.5px; font-weight: 600; cursor: pointer; border-radius: 6px; margin-right: 6px;
-                display: inline-flex; align-items: center; gap: 6px;
+                margin: 0 6px 0 0 !important; background: #1e293b !important; border: 1px solid #334155 !important;
+                color: #ffffff !important; padding: 7px 12px !important; width: auto !important; height: auto !important;
+                font-size: 12.5px !important; font-weight: 600 !important; line-height: 1.2 !important;
+                cursor: pointer !important; border-radius: 6px !important; white-space: nowrap !important;
+                display: inline-flex !important; align-items: center !important; justify-content: center !important; gap: 6px !important;
+            }
+            .usat-modal-btn svg {
+                width: 15px !important; height: 15px !important;
+                min-width: 15px !important; max-width: 15px !important;
+                flex-shrink: 0 !important; display: block !important;
             }
             .usat-modal-btn:hover { background: #334155; }
             .usat-modal-close { background: #dc2626; border-color: #dc2626; }
