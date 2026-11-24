@@ -75,6 +75,7 @@
             #tree.simulador-activo li.list-group-item {
                 border-left: 4px solid transparent !important;
                 display: flex !important; align-items: center !important; justify-content: space-between !important;
+                cursor: default !important;
             }
 
             #tree.simulador-activo .fila-ra {
@@ -523,6 +524,18 @@
         isSimulating = false;
         originalTreeHTML = '';
         asegurarEstilos();
+
+        if (!tree.dataset.usatClickGuard) {
+            tree.dataset.usatClickGuard = '1';
+            ['click', 'dblclick'].forEach((ev) => {
+                tree.addEventListener(ev, (e) => {
+                    if (!isSimulating) return;
+                    if (e.target.closest('input, button, select, textarea')) return;
+                    e.stopImmediatePropagation();
+                    e.stopPropagation();
+                }, true);
+            });
+        }
 
         const btnToggle = document.createElement('button');
         btnToggle.type = 'button';
